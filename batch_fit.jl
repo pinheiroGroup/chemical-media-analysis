@@ -9,6 +9,10 @@ FitOptions mirror the GUIbiont web interface defaults:
 Each curve is fitted on its own valid (non-missing) timepoints — conditions differ
 in measurement duration (44–97 timepoints), so GrowthData is constructed per curve.
 
+Checkpointing: each curve is appended to the output CSV immediately after fitting.
+On restart the script skips labels already present in the file, so it resumes safely
+after a crash or SIGKILL.
+
 Run with multiple threads for speed:
   julia --threads auto batch_fit.jl
 
@@ -28,6 +32,10 @@ using Statistics: mean, median
 
 const DATA_DIR    = joinpath(@__DIR__, "data")
 const RESULTS_DIR = joinpath(@__DIR__, "results")
+const OUT_PATH    = joinpath(RESULTS_DIR, "batch_fit_results.csv")
+
+const CSV_HEADER = [:round, :label, :gr, :exit_lag_rate, :N_max, :shape,
+                    :aicc, :loss, :n_timepoints, :converged]
 
 # FitOptions matching GUIbiont interface
 const OPTS = FitOptions(
@@ -41,8 +49,8 @@ const OPTS = FitOptions(
     loss                            = "RE",
 )
 
-const _AHPM     = MODEL_REGISTRY["aHPM"]
-const _N_PARAMS  = length(_AHPM.param_names)   # 4: gr, exit_lag_rate, N_max, shape
+const _AHPM    = MODEL_REGISTRY["aHPM"]
+const _N_PARAMS = length(_AHPM.param_names)   # 4: gr, exit_lag_rate, N_max, shape
 const SPEC = ModelSpec(
     [_AHPM],
     [fill(1.0, _N_PARAMS)];
@@ -51,82 +59,107 @@ const SPEC = ModelSpec(
 )
 
 # ---------------------------------------------------------------------------
-# Per-curve GrowthData from a raw CSV DataFrame
+# Checkpoint helpers
 # ---------------------------------------------------------------------------
 
 """
-    curve_data(raw, label) -> GrowthData
+    load_done_labels(path) -> Set{String}
 
-Extract a single-curve `GrowthData` from the raw CSV DataFrame, keeping only
-timepoints where the curve has a non-missing OD value.
+Read already-fitted labels from the checkpoint CSV.  Returns an empty set if the
+file does not exist yet.
 """
+function load_done_labels(path::String)::Set{String}
+    isfile(path) || return Set{String}()
+    df = CSV.read(path, DataFrame; select=[:label])
+    return Set{String}(df.label)
+end
+
+"""
+    open_checkpoint(path) -> IO
+
+Open (or create) the checkpoint CSV for appending.  Writes the header row only
+when the file is new.
+"""
+function open_checkpoint(path::String)::IO
+    new_file = !isfile(path)
+    io = open(path, "a")
+    if new_file
+        println(io, join(CSV_HEADER, ","))
+    end
+    return io
+end
+
+"""
+    append_row!(io, lock, row::NamedTuple)
+
+Thread-safely append one result row to the open CSV handle.
+"""
+function append_row!(io::IO, lk::ReentrantLock, row::NamedTuple)
+    line = join([getfield(row, c) for c in CSV_HEADER], ",")
+    lock(lk) do
+        println(io, line)
+        flush(io)
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Per-curve GrowthData
+# ---------------------------------------------------------------------------
+
 function curve_data(raw::DataFrame, label::String)::GrowthData
     times_all = Float64.(raw[!, :Time_h])
     od_col    = raw[!, Symbol(label)]
     mask      = .!ismissing.(od_col)
     times     = times_all[mask]
     od        = Float64.(od_col[mask])
-    curves    = reshape(od, 1, length(od))
-    return GrowthData(curves, times, [label])
+    return GrowthData(reshape(od, 1, length(od)), times, [label])
 end
 
 # ---------------------------------------------------------------------------
-# Fit one round — fully parallel across curves
+# Fit one round with per-curve checkpointing
 # ---------------------------------------------------------------------------
 
-"""
-    fit_round(round_num) -> DataFrame
-
-Load the CSV for `round_num`, then fit each curve in parallel using
-`Threads.@threads`. Each curve uses only its own valid (non-missing) timepoints.
-"""
-function fit_round(round_num::Int)::DataFrame
+function fit_round(round_num::Int, done::Set{String}, io::IO, lk::ReentrantLock)
     csv_path = joinpath(DATA_DIR, "Round$(lpad(round_num, 2, '0')).csv")
     raw      = CSV.read(csv_path, DataFrame; missingstring="")
-    labels   = string.(names(raw)[2:end])   # skip Time_h
-    n        = length(labels)
-    println("  Round$(lpad(round_num, 2, '0')): $(n) curves on $(Threads.nthreads()) thread(s) … ")
+    labels   = string.(names(raw)[2:end])
 
-    results = Vector{Any}(undef, n)
-    Threads.@threads for i in 1:n
-        label = labels[i]
-        try
+    todo  = filter(l -> l ∉ done, labels)
+    n_all = length(labels)
+    n_todo = length(todo)
+    n_skip = n_all - n_todo
+
+    println("  Round$(lpad(round_num, 2, '0')): $(n_todo) to fit, $(n_skip) already done  " *
+            "($(Threads.nthreads()) thread(s))")
+    n_todo == 0 && return
+
+    done_count = Threads.Atomic{Int}(0)
+
+    Threads.@threads for i in 1:n_todo
+        label = todo[i]
+        row = try
             data = curve_data(raw, label)
             res  = kinbiont_fit(data, SPEC, OPTS)
             r    = res[1]
             p    = Float64.(r.best_params)
-            results[i] = (
-                round         = round_num,
-                label         = label,
-                gr            = p[1],
-                exit_lag_rate = p[2],
-                N_max         = p[3],
-                shape         = p[4],
-                aicc          = r.best_aic,
-                loss          = r.loss,
-                n_timepoints  = length(data.times),
-                converged     = true,
-            )
+            (round=round_num, label=label,
+             gr=p[1], exit_lag_rate=p[2], N_max=p[3], shape=p[4],
+             aicc=r.best_aic, loss=r.loss,
+             n_timepoints=length(data.times), converged=true)
         catch
-            results[i] = (
-                round         = round_num,
-                label         = label,
-                gr            = NaN,
-                exit_lag_rate = NaN,
-                N_max         = NaN,
-                shape         = NaN,
-                aicc          = NaN,
-                loss          = NaN,
-                n_timepoints  = 0,
-                converged     = false,
-            )
+            (round=round_num, label=label,
+             gr=NaN, exit_lag_rate=NaN, N_max=NaN, shape=NaN,
+             aicc=NaN, loss=NaN, n_timepoints=0, converged=false)
+        end
+
+        append_row!(io, lk, row)
+        c = Threads.atomic_add!(done_count, 1) + 1
+        if c % 100 == 0 || c == n_todo
+            print("\r    $(c)/$(n_todo) fitted …")
+            flush(stdout)
         end
     end
-
-    df    = DataFrame(results)
-    n_ok  = sum(df.converged)
-    println("    done  (converged: $(n_ok)/$(n))")
-    return df
+    println()
 end
 
 # ---------------------------------------------------------------------------
@@ -135,21 +168,30 @@ end
 
 function main()
     mkpath(RESULTS_DIR)
+
+    done = load_done_labels(OUT_PATH)
+    if !isempty(done)
+        println("Resuming: $(length(done)) curves already in $(OUT_PATH)")
+    end
+
     println("Threads: $(Threads.nthreads())")
     println("Fitting rounds 1–7 with aHPM …\n")
 
-    all_rounds = map(1:7) do r
-        fit_round(r)
+    io = open_checkpoint(OUT_PATH)
+    lk = ReentrantLock()
+    try
+        for r in 1:7
+            fit_round(r, done, io, lk)
+        end
+    finally
+        close(io)
     end
-    results = vcat(all_rounds...)
 
-    out_path = joinpath(RESULTS_DIR, "batch_fit_results.csv")
-    CSV.write(out_path, results)
-    println("\nSaved $(nrow(results)) rows → $(out_path)")
-
+    # Summary from the completed file
+    results = CSV.read(OUT_PATH, DataFrame)
     conv = filter(r -> r.converged, results)
     pct  = round(100 * nrow(conv) / nrow(results); digits=1)
-    println("\nConverged: $(nrow(conv))/$(nrow(results)) ($(pct)%)")
+    println("\nTotal: $(nrow(results)) curves  |  converged: $(nrow(conv)) ($(pct)%)")
     println("\nParameter summary (converged curves):")
     for col in [:gr, :exit_lag_rate, :N_max, :shape]
         vals = filter(!isnan, conv[!, col])
