@@ -44,11 +44,16 @@ def convert_round(round_num: int) -> None:
     # Drop trailing rows where time is None (Round03 has ~900 empty rows)
     data_rows = [r for r in rows[1:] if r[0] is not None]
 
+    # Replace None (missing OD) with empty string so CSV.jl reads them as missing
+    # rather than the string "None".  Some curves have fewer timepoints than others.
+    def fmt(v):
+        return "" if v is None else v
+
     dst.parent.mkdir(parents=True, exist_ok=True)
     with dst.open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(header)
-        writer.writerows(data_rows)
+        writer.writerows([[fmt(v) for v in row] for row in data_rows])
 
     n_curves = len(header) - 1
     n_tp     = len(data_rows)
