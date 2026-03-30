@@ -8,20 +8,23 @@ Workflow:
   4. Join and aggregate: mean growth params per condition
   5. Correlation analysis: Spearman rank correlations (compounds → params)
   6. Decision-tree regression: feature importance for gr, N_max, exit_lag_rate
-  7. Save results to results/ml_results/
+  7. Figures: validation scatter, correlation heatmap, feature importance bars
+  8. Save results to results/ml_results/
 
 Input:
   results/batch_fit_results.csv
   ../chemical-media-dataset/xlsx_raw/BW25113_GrowthDataEvaluation.xlsx
   ../chemical-media-dataset/xlsx_raw/BW25113_Medium composition.xlsx
 
-Output:
-  results/ml_results/condition_means.csv       (per-condition mean params)
-  results/ml_results/correlations.csv          (Spearman ρ, compounds × params)
-  results/ml_results/feature_importance_gr.csv
-  results/ml_results/feature_importance_Nmax.csv
-  results/ml_results/feature_importance_lag.csv
-  results/ml_results/validation_kinbiont_vs_reference.csv (gr vs r, N_max vs K)
+Output (CSVs):
+  results/ml_results/condition_means.csv
+  results/ml_results/correlations.csv
+  results/ml_results/feature_importance_{gr,Nmax,lag}.csv
+  results/ml_results/validation_kinbiont_vs_reference.csv
+Output (figures, 300 dpi PDF + PNG):
+  results/ml_results/fig_validation.pdf
+  results/ml_results/fig_correlation_heatmap.pdf
+  results/ml_results/fig_feature_importance.pdf
 """
 
 using Pkg
@@ -33,6 +36,7 @@ using XLSX
 using Statistics: mean, cor
 using StatsBase: corspearman
 using DecisionTree
+using CairoMakie
 
 const XLSX_DIR    = "/media/aivuk/64fce268-2613-4033-b39f-537ae2d28805/roms/pinheiroTech/chemical-media-dataset/xlsx_raw"
 const RESULTS_DIR = joinpath(@__DIR__, "results")
@@ -197,6 +201,78 @@ function validation_comparison(cond_df::DataFrame)::DataFrame
 end
 
 # ---------------------------------------------------------------------------
+# Figures
+# ---------------------------------------------------------------------------
+
+function fig_validation(val_df::DataFrame, rho_gr::Float64, rho_Nmax::Float64)
+    fig = Figure(size=(900, 420), fontsize=13)
+
+    for (col, (x_col, y_col, xlabel, ylabel, rho)) in enumerate([
+        (:gr,   :r_ref,  "Reference r (h⁻¹)",          "Fitted gr (h⁻¹)",    rho_gr),
+        (:N_max, :K_ref, "Reference K (OD)",             "Fitted N_max (OD)", rho_Nmax),
+    ])
+        ax = Axis(fig[1, col];
+            xlabel = xlabel,
+            ylabel = ylabel,
+            title  = "ρ = $(round(rho; digits=3))",
+        )
+        x = val_df[!, x_col]; y = val_df[!, y_col]
+        ok = .!isnan.(x) .& .!isnan.(y)
+        scatter!(ax, x[ok], y[ok]; color=(:steelblue, 0.5), markersize=5)
+        # y = x reference line
+        lo = min(minimum(x[ok]), minimum(y[ok]))
+        hi = max(maximum(x[ok]), maximum(y[ok]))
+        lines!(ax, [lo, hi], [lo, hi]; color=:black, linestyle=:dash, linewidth=1)
+    end
+
+    return fig
+end
+
+function fig_correlation_heatmap(corr_df::DataFrame)
+    params      = [:gr, :exit_lag_rate, :N_max, :shape]
+    param_labels = ["gr", "exit_lag_rate", "N_max", "shape"]
+    compounds   = corr_df.compound
+    Z = [corr_df[i, p] for i in 1:nrow(corr_df), p in params]
+
+    # Sort compounds by |ρ| with gr (most informative first)
+    order = sortperm(abs.(Z[:, 1]); rev=true)
+    Z_sorted = Z[order, :]
+    comp_sorted = compounds[order]
+
+    n_comp = length(comp_sorted)
+    fig = Figure(size=(520, max(300, 18 * n_comp + 80)), fontsize=11)
+    ax  = Axis(fig[1, 1];
+        xticks = (1:length(params), param_labels),
+        yticks = (1:n_comp, comp_sorted),
+        xticklabelrotation = 0.0,
+    )
+    hm = heatmap!(ax, 1:length(params), 1:n_comp, Z_sorted';
+        colormap = :RdBu, colorrange = (-1, 1))
+    Colorbar(fig[1, 2], hm; label = "Spearman ρ", width = 15)
+
+    return fig
+end
+
+function fig_feature_importance(imp_dfs::Vector{DataFrame}, targets::Vector{String};
+                                 top_n::Int = 15)
+    n = length(imp_dfs)
+    fig = Figure(size=(360 * n, 420), fontsize=12)
+
+    for (col, (imp_df, target)) in enumerate(zip(imp_dfs, targets))
+        df  = imp_df[1:min(top_n, nrow(imp_df)), :]
+        ax  = Axis(fig[1, col];
+            xlabel = "Importance",
+            title  = target,
+            yticks = (1:nrow(df), reverse(df.compound)),
+        )
+        barplot!(ax, 1:nrow(df), reverse(df.importance);
+            direction = :x, color = :steelblue)
+    end
+
+    return fig
+end
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -216,11 +292,12 @@ function main()
     println("\nValidation: KinBiont vs reference K/r …")
     val_df = validation_comparison(cond_df)
     CSV.write(joinpath(ML_DIR, "validation_kinbiont_vs_reference.csv"), val_df)
-    # Quick Spearman correlations between fitted and reference
-    gr_ok  = .!isnan.(val_df.gr) .& .!isnan.(val_df.r_ref)
+    gr_ok   = .!isnan.(val_df.gr)   .& .!isnan.(val_df.r_ref)
     Nmax_ok = .!isnan.(val_df.N_max) .& .!isnan.(val_df.K_ref)
-    println("  ρ(gr, r_ref)   = $(round(corspearman(val_df.gr[gr_ok],   val_df.r_ref[gr_ok]);   digits=3))")
-    println("  ρ(N_max, K_ref) = $(round(corspearman(val_df.N_max[Nmax_ok], val_df.K_ref[Nmax_ok]); digits=3))")
+    rho_gr   = corspearman(val_df.gr[gr_ok],    val_df.r_ref[gr_ok])
+    rho_Nmax = corspearman(val_df.N_max[Nmax_ok], val_df.K_ref[Nmax_ok])
+    println("  ρ(gr, r_ref)    = $(round(rho_gr;   digits=3))")
+    println("  ρ(N_max, K_ref) = $(round(rho_Nmax; digits=3))")
 
     println("\nSpearman correlations (compounds → growth params) …")
     corr_df = correlation_analysis(cond_df, compound_cols)
@@ -232,14 +309,35 @@ function main()
     end
 
     println("\nDecision-tree feature importance …")
-    for (param, fname) in [(:gr, "gr"), (:N_max, "Nmax"), (:exit_lag_rate, "lag")]
+    imp_dfs  = DataFrame[]
+    imp_names = [("gr", "gr"), ("Nmax", "N_max"), ("lag", "exit_lag_rate")]
+    for (fname, param_str) in imp_names
+        param  = Symbol(param_str)
         imp_df = tree_importance(cond_df, compound_cols, param)
         CSV.write(joinpath(ML_DIR, "feature_importance_$(fname).csv"), imp_df)
+        push!(imp_dfs, imp_df)
         println("  Top-3 predictors of $(param):")
         for r in eachrow(imp_df[1:min(3, nrow(imp_df)), :])
             println("    $(rpad(r.compound, 30))  importance=$(round(r.importance; digits=4))")
         end
     end
+
+    println("\nGenerating figures …")
+
+    f1 = fig_validation(val_df, rho_gr, rho_Nmax)
+    save(joinpath(ML_DIR, "fig_validation.pdf"), f1; pt_per_unit=1)
+    save(joinpath(ML_DIR, "fig_validation.png"), f1; px_per_unit=2)
+    println("  fig_validation saved")
+
+    f2 = fig_correlation_heatmap(corr_df)
+    save(joinpath(ML_DIR, "fig_correlation_heatmap.pdf"), f2; pt_per_unit=1)
+    save(joinpath(ML_DIR, "fig_correlation_heatmap.png"), f2; px_per_unit=2)
+    println("  fig_correlation_heatmap saved")
+
+    f3 = fig_feature_importance(imp_dfs, ["gr", "N_max", "exit_lag_rate"])
+    save(joinpath(ML_DIR, "fig_feature_importance.pdf"), f3; pt_per_unit=1)
+    save(joinpath(ML_DIR, "fig_feature_importance.png"), f3; px_per_unit=2)
+    println("  fig_feature_importance saved")
 
     println("\nAll results saved to $(ML_DIR)")
 end
