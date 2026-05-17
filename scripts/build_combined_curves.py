@@ -6,7 +6,7 @@ Different rounds have different numbers of timepoints and slightly different
 time axes.  This script linearly interpolates each curve to a shared 97-point
 grid spanning 0–48 h so GUIbiont receives a uniform matrix.
 
-Input:  data/Round01.csv … data/Round07.csv
+Input:  data/bw25113_round0{1-7}/data_channel_1.csv
 Output: results/all_curves_combined.csv
         Columns: Time_h, <curve labels from all rounds>
 """
@@ -35,13 +35,17 @@ def interpolate_round(df: pd.DataFrame, t_grid: np.ndarray) -> pd.DataFrame:
     out = {}
     for col in curves.columns:
         y = pd.to_numeric(curves[col], errors="coerce").values
-        # Only interpolate over the range where we have data
         valid = ~np.isnan(y)
         if valid.sum() < 2:
-            out[col] = np.full(len(t_grid), np.nan)
+            # Use a constant zero series — GUIbiont's prescreen/blank detection
+            # will flag and segregate it. Avoid NaN: /api/cluster-sweep does not
+            # sanitise NaN and silently fails when any row contains them.
+            out[col] = np.zeros(len(t_grid))
         else:
-            out[col] = np.interp(t_grid, t[valid], y[valid],
-                                 left=np.nan, right=np.nan)
+            # np.interp with no left/right uses boundary-constant extrapolation
+            # (clamps to y[first] / y[last]). This keeps the matrix NaN-free,
+            # which the GUIbiont clustering sweep requires.
+            out[col] = np.interp(t_grid, t[valid], y[valid])
     return pd.DataFrame(out)
 
 
@@ -51,9 +55,9 @@ def main() -> None:
     all_curves = []
     total = 0
     for r in ROUNDS:
-        path = DATA_DIR / f"Round{r:02d}.csv"
+        path = DATA_DIR / f"bw25113_round{r:02d}" / "data_channel_1.csv"
         if not path.exists():
-            print(f"  WARNING: {path.name} not found — skipping round {r:02d}")
+            print(f"  WARNING: {path} not found — skipping round {r:02d}")
             continue
         df = pd.read_csv(path)
         interp = interpolate_round(df, t_grid)

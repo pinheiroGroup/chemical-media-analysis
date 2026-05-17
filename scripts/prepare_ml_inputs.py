@@ -37,6 +37,10 @@ def load_fits(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
     if "converged" in df.columns:
         df = df[df["converged"].astype(bool)]
+    # GUIbiont's batch-fit CSV uses "well" for the curve name; the join below
+    # expects "label" (matches the column in BW25113_GrowthDataEvaluation.xlsx).
+    if "label" not in df.columns and "well" in df.columns:
+        df = df.rename(columns={"well": "label"})
     print(f"  Fit results: {len(df)} converged curves")
     return df
 
@@ -59,12 +63,16 @@ def load_evaluation(path: Path) -> pd.DataFrame:
 
 def load_composition(path: Path) -> tuple[pd.DataFrame, list[str]]:
     df = pd.read_excel(path)
-    df.columns = df.columns.str.strip()
+    # Compound headers in the figshare workbook embed a literal newline before
+    # the unit ("K2HPO4\n(mM)"). Collapse internal whitespace so the resulting
+    # CSV stays single-line per row (and GUIbiont's column UI renders cleanly).
+    df.columns = df.columns.str.replace(r"\s+", " ", regex=True).str.strip()
     cond_col = next((c for c in df.columns if "condition" in c.lower()), df.columns[0])
     df = df.rename(columns={cond_col: "ConditionID"})
     df["ConditionID"] = df["ConditionID"].astype(str).str.strip()
-    # Compound columns: everything except ConditionID and other metadata
-    meta = {"ConditionID"}
+    # Compound columns: everything except ConditionID and the per-curve metadata
+    # columns ("Label", "Assay ID") that the figshare workbook also carries.
+    meta = {"ConditionID", "Label", "Assay ID"}
     compound_cols = [c for c in df.columns if c not in meta]
     for col in compound_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")

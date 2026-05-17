@@ -1,17 +1,23 @@
 """
-Convert BW25113 chemical-media growth curve Excel files to GUIbiont-compatible CSVs.
+Convert BW25113 chemical-media growth curve Excel files to GUIbiont-compatible
+experiment folders.
 
 Source: figshare DOI 10.1038/s41597-025-05356-3
-Input:  ../chemical-media-dataset/xlsx_raw/BW25113_Growth_Round0{1-7}.xlsx
-Output: data/Round0{1-7}.csv  (Time_h, Curve00001, Curve00002, ...)
+Input:  BW25113_Growth_Round0{1-7}.xlsx (location via --xlsx-dir, $DATA_SRC, or default)
+Output: data/bw25113_round0{1-7}/data_channel_1.csv
+        data/bw25113_round0{1-7}/annotation_clean.csv
 
-Each CSV follows the GUIbiont format:
-  - First column: Time_h (numeric, hours)
-  - Remaining columns: one growth curve per column (header = curve label)
-  - No trailing empty rows
+Each output folder follows the GUIbiont Clean_data layout:
+  - data_channel_1.csv: Time_h, Curve00001, Curve00002, ...
+  - annotation_clean.csv: one row per curve (no header), `name,g,,,,,`
+    where "g" marks the well as a real (non-blank, non-excluded) growth curve.
+Drop these folders into $GUIBIONT/Clean_data/ to make the experiments visible
+in the Batch Fit / Plot Growth tabs.
 """
 
+import argparse
 import csv
+import os
 import sys
 from pathlib import Path
 
@@ -20,51 +26,100 @@ try:
 except ImportError:
     sys.exit("openpyxl is required: pip install openpyxl")
 
-XLSX_DIR = Path("/media/aivuk/64fce268-2613-4033-b39f-537ae2d28805/roms/pinheiroTech/chemical-media-dataset/xlsx_raw")
-OUT_DIR  = Path(__file__).parent / "data"
-ROUNDS   = range(1, 8)
+DEFAULT_XLSX_DIR = Path(__file__).parent.parent / "chemical-media-dataset" / "xlsx_raw"
+OUT_DIR = Path(__file__).parent / "data"
+ROUNDS  = range(1, 8)
 
 
-def convert_round(round_num: int) -> None:
-    src = XLSX_DIR / f"BW25113_Growth_Round{round_num:02d}.xlsx"
-    dst = OUT_DIR  / f"Round{round_num:02d}.csv"
+def exp_name(round_num: int) -> str:
+    return f"bw25113_round{round_num:02d}"
 
-    print(f"  {src.name} → {dst.name}", end="", flush=True)
+
+# GUIbiont's batch fitter requires at least this many non-empty OD readings
+# per curve (src/routes/fitting.jl: `length(valid_indices) < 10`). Curves
+# below the threshold are dropped here so they don't show up as failures.
+MIN_DATA_POINTS = 10
+
+
+def _is_numeric(v) -> bool:
+    if v is None or v == "":
+        return False
+    try:
+        float(v)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def convert_round(round_num: int, xlsx_dir: Path) -> None:
+    src     = xlsx_dir / f"BW25113_Growth_Round{round_num:02d}.xlsx"
+    exp_dir = OUT_DIR / exp_name(round_num)
+    data_dst = exp_dir / "data_channel_1.csv"
+    ann_dst  = exp_dir / "annotation_clean.csv"
+
+    print(f"  {src.name} → {exp_dir.name}/", end="", flush=True)
 
     wb = openpyxl.load_workbook(src, read_only=True, data_only=True)
     ws = wb.worksheets[0]
-
     rows = list(ws.iter_rows(values_only=True))
     wb.close()
 
-    # Header: rename "Time (h)" → "Time_h" for safe column naming
     header = list(rows[0])
     header[0] = "Time_h"
-
-    # Drop trailing rows where time is None (Round03 has ~900 empty rows)
     data_rows = [r for r in rows[1:] if r[0] is not None]
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with dst.open("w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(header)
-        writer.writerows(data_rows)
+    # Drop curve columns with fewer than MIN_DATA_POINTS numeric readings —
+    # GUIbiont would otherwise refuse to fit them and report them as failures.
+    keep_idx = [0]  # always keep the time column
+    for j in range(1, len(header)):
+        n_numeric = sum(1 for r in data_rows if j < len(r) and _is_numeric(r[j]))
+        if n_numeric >= MIN_DATA_POINTS:
+            keep_idx.append(j)
 
-    n_curves = len(header) - 1
+    n_dropped = (len(header) - 1) - (len(keep_idx) - 1)
+
+    filtered_header = [header[j] for j in keep_idx]
+    filtered_rows   = [[r[j] if j < len(r) else "" for j in keep_idx] for r in data_rows]
+
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    with data_dst.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(filtered_header)
+        writer.writerows(filtered_rows)
+
+    curve_names = filtered_header[1:]
+    with ann_dst.open("w", newline="") as f:
+        writer = csv.writer(f)
+        for name in curve_names:
+            writer.writerow([name, "g", "", "", "", "", ""])
+
+    n_curves = len(curve_names)
     n_tp     = len(data_rows)
     t_max    = data_rows[-1][0]
-    print(f"  ({n_curves} curves × {n_tp} timepoints, t_max={t_max}h)")
+    drop_note = f", dropped {n_dropped} empty" if n_dropped else ""
+    print(f"  ({n_curves} curves × {n_tp} timepoints, t_max={t_max}h{drop_note})")
 
 
 def main() -> None:
-    print(f"Reading from: {XLSX_DIR}")
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    parser.add_argument(
+        "--xlsx-dir",
+        type=Path,
+        default=Path(os.environ.get("DATA_SRC", DEFAULT_XLSX_DIR)),
+        help="Directory containing BW25113_Growth_Round0{1-7}.xlsx "
+             "(default: $DATA_SRC, else ../chemical-media-dataset/xlsx_raw)",
+    )
+    args = parser.parse_args()
+    xlsx_dir = args.xlsx_dir.expanduser().resolve()
+
+    print(f"Reading from: {xlsx_dir}")
     print(f"Writing to:  {OUT_DIR}\n")
 
-    if not XLSX_DIR.exists():
-        sys.exit(f"Source directory not found: {XLSX_DIR}")
+    if not xlsx_dir.exists():
+        sys.exit(f"Source directory not found: {xlsx_dir}")
 
     for r in ROUNDS:
-        convert_round(r)
+        convert_round(r, xlsx_dir)
 
     print("\nDone.")
 
