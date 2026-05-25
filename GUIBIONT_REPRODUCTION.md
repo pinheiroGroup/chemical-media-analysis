@@ -36,6 +36,7 @@ Run from the repo root (point at the directory holding the raw xlsx files):
 ```bash
 python preprocess.py --xlsx-dir "$DATA_SRC"
 # or rely on the default: ../chemical-media-dataset/xlsx_raw
+# To keep blanks/flat curves in the output: --min-amplitude 0
 ```
 
 Output (per round `NN` = 01 … 07):
@@ -46,9 +47,14 @@ data/bw25113_roundNN/
 └── annotation_clean.csv # CurveNNNNN, g, , , , ,    (no header)
 ```
 
-Total: 13,400 curves across 7 rounds (2628 / 2640 / 960 / 2574 / 2498 / 1320 / 780 per round).
-Empty columns in the source xlsx are dropped automatically (rounds 04 and 05 had 66 and 142
-empty wells respectively) — they would otherwise be reported as fit failures by GUIbiont.
+Two filters run during conversion (both reported in the per-round summary):
+
+- **Empty columns** dropped (rounds 04 and 05 had 66 and 142 empty wells respectively).
+- **Flat curves** dropped — any curve whose `max(OD) - min(OD)` is below
+  `--min-amplitude` (default `0.05`). These are blanks, dead cultures, or
+  instrument-noise-only wells; fitting them produces meaningless parameters
+  that pollute the per-condition means in Step 6. Lower the threshold
+  (e.g., `0.02`) to keep marginal slow-growers, or set to `0` to disable.
 
 > **Why both files?** GUIbiont's `/api/experiment/{name}/info` requires both
 > `data_channel_1.csv` *and* `annotation_clean.csv` to exist — otherwise the
@@ -79,13 +85,31 @@ Repeat the following for each of the seven rounds (`bw25113_round01` … `bw2511
 3. Under **Model selection**, leave **Single model** selected and pick `aHPM` from the model dropdown  
    (to fit several models and pick the best by AICc, use **Compare models — pick best by AICc** and tick the desired checkboxes instead)
 4. *Optional* — tick **Blank subtraction** if the round contains blank wells you want subtracted (method defaults to *Point-by-point*)
-5. Leave the optimizer at **BOBYQA (default)**, max iterations `20000`, tolerance `1e-6`
+5. **Optimizer** — switch the mode dropdown from **Single** to **Best of N**:
+   - Deterministic: tick `LN_COBYLA` (default)
+   - Stochastic: tick `BBO_adaptive_de_rand_1_bin_radiuslimited` (default)
+   - **Runs per stochastic:** `3`
+   
+   This runs COBYLA once + BBO three times per curve and keeps the fit with the lowest RMSE.
+   COBYLA gives a reproducible baseline; BBO's three restarts escape local minima where COBYLA gets stuck.
+   On Curve02586 we measured ~3× lower error vs single-COBYLA, with most of the win coming from BBO finding a better basin.
+
+   Leave max iterations at `20000`, tolerance at `1e-6`, and **Skip flat ≤** at `0.05`
+   (the upstream filter in `preprocess.py` should already have removed flats; this is a safety net).
 6. Under **Wells**, click **Select all**
 7. Click **⚡ Run Batch Fit**  
-   (runtime depends on hardware and Julia thread count — expect ≥ 95% convergence per round)
-8. When the results table appears, click **📥 Download CSV** in the results bar → save as `results/batch_fit_round01.csv`
+   Runtime: best-of-N is ~4× a single fit. On 2,500 curves with `--threads=auto` on a modern laptop, expect ~15–30 min per round. The progress bar tracks completed wells.
+8. When the results table appears, check the summary bar:  
+   `✓ N fitted   ⊘ M skipped (flat)`  
+   Expect ≥99% of non-flat curves to converge. Click **📥 Download CSV** → save as `results/batch_fit_round01.csv`.
 
 Repeat for rounds 02–07, saving as `results/batch_fit_round02.csv` … `results/batch_fit_round07.csv`.
+
+> **Why Best of N over a single optimizer?** Local optimizers (COBYLA, BOBYQA) are reproducible but
+> can get trapped in basins around bad seeds. BBO's stochastic global search escapes those, but is
+> noisy — one run might be excellent, another terrible. Running several attempts and keeping the
+> best fit by RMSE gets the strengths of both. The new `loss` and `optimizer_used` columns in the
+> CSV record which attempt won per curve.
 
 > **Note:** The Batch Fit tab does not expose smoothing or stationary-phase trimming controls — fitting runs on the raw curves as supplied. The fitter does report a derived `stationary_phase_start` column in the output.
 
@@ -101,7 +125,10 @@ python scripts/combine_fits.py
 
 This script concatenates `results/batch_fit_round0{1-7}.csv`, adds a `round` column, and writes:
 
-- `results/batch_fit_results.csv` — all 13,608 rows with columns `round, label, gr, exit_lag_rate, N_max, shape, aicc, loss, n_timepoints, converged`
+- `results/batch_fit_results.csv` — one row per fitted curve with columns `round, experiment, well, model, gr, exit_lag_rate, N_max, shape, stationary_phase_start, aic, loss, optimizer_used`
+
+The `loss` column is the RMSE of the chosen fit against the raw OD over the growth window — useful for spotting per-curve outliers.  
+The `optimizer_used` column records which optimizer (and which restart of BBO) produced the winning fit for each curve; useful for sanity-checking that Best-of-N is actually doing work.
 
 ---
 
