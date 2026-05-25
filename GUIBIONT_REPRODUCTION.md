@@ -27,7 +27,7 @@ everything else runs in the browser.
 ## Step 1 — Convert raw xlsx to GUIbiont experiment folders
 
 The raw data are seven BioTek plate-reader Excel files (`BW25113_Growth_Round01.xlsx` … `Round07.xlsx`).
-This script converts each to a self-contained GUIbiont experiment folder: a
+The script used in this step converts each Excel file to a self-contained GUIbiont experiment folder: a
 `data_channel_1.csv` (Time + one column per curve) and a companion
 `annotation_clean.csv` (one row per curve marked as a real growth well).
 
