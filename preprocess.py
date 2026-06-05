@@ -40,6 +40,11 @@ def exp_name(round_num: int) -> str:
 # below the threshold are dropped here so they don't show up as failures.
 MIN_DATA_POINTS = 10
 
+# Drop curves whose OD never changes by more than this — blanks, dead cultures,
+# instrument-noise-only wells. No growth signal to fit, and they'd just
+# contaminate per-condition means in the ML pipeline.
+DEFAULT_MIN_AMPLITUDE = 0.05
+
 
 def _is_numeric(v) -> bool:
     if v is None or v == "":
@@ -51,7 +56,7 @@ def _is_numeric(v) -> bool:
         return False
 
 
-def convert_round(round_num: int, xlsx_dir: Path) -> None:
+def convert_round(round_num: int, xlsx_dir: Path, min_amplitude: float = DEFAULT_MIN_AMPLITUDE) -> None:
     src     = xlsx_dir / f"BW25113_Growth_Round{round_num:02d}.xlsx"
     exp_dir = OUT_DIR / exp_name(round_num)
     data_dst = exp_dir / "data_channel_1.csv"
@@ -68,15 +73,23 @@ def convert_round(round_num: int, xlsx_dir: Path) -> None:
     header[0] = "Time_h"
     data_rows = [r for r in rows[1:] if r[0] is not None]
 
-    # Drop curve columns with fewer than MIN_DATA_POINTS numeric readings —
-    # GUIbiont would otherwise refuse to fit them and report them as failures.
+    # Per-column filtering. Two reasons to drop a curve column:
+    #   1. Fewer than MIN_DATA_POINTS numeric readings (empty/very-short).
+    #   2. Amplitude (max - min) below `min_amplitude` (flat / blank / dead).
     keep_idx = [0]  # always keep the time column
+    n_empty  = 0
+    n_flat   = 0
     for j in range(1, len(header)):
-        n_numeric = sum(1 for r in data_rows if j < len(r) and _is_numeric(r[j]))
-        if n_numeric >= MIN_DATA_POINTS:
-            keep_idx.append(j)
+        vals = [float(r[j]) for r in data_rows if j < len(r) and _is_numeric(r[j])]
+        if len(vals) < MIN_DATA_POINTS:
+            n_empty += 1
+            continue
+        if min_amplitude > 0 and (max(vals) - min(vals)) < min_amplitude:
+            n_flat += 1
+            continue
+        keep_idx.append(j)
 
-    n_dropped = (len(header) - 1) - (len(keep_idx) - 1)
+    n_dropped = n_empty + n_flat
 
     filtered_header = [header[j] for j in keep_idx]
     filtered_rows   = [[r[j] if j < len(r) else "" for j in keep_idx] for r in data_rows]
@@ -96,7 +109,10 @@ def convert_round(round_num: int, xlsx_dir: Path) -> None:
     n_curves = len(curve_names)
     n_tp     = len(data_rows)
     t_max    = data_rows[-1][0]
-    drop_note = f", dropped {n_dropped} empty" if n_dropped else ""
+    drop_parts = []
+    if n_empty: drop_parts.append(f"{n_empty} empty")
+    if n_flat:  drop_parts.append(f"{n_flat} flat")
+    drop_note = f", dropped {' + '.join(drop_parts)}" if drop_parts else ""
     print(f"  ({n_curves} curves × {n_tp} timepoints, t_max={t_max}h{drop_note})")
 
 
@@ -109,17 +125,25 @@ def main() -> None:
         help="Directory containing BW25113_Growth_Round0{1-7}.xlsx "
              "(default: $DATA_SRC, else ../chemical-media-dataset/xlsx_raw)",
     )
+    parser.add_argument(
+        "--min-amplitude",
+        type=float,
+        default=DEFAULT_MIN_AMPLITUDE,
+        help=f"Drop curves with (max - min) OD below this. Catches blanks / dead cultures. "
+             f"Default {DEFAULT_MIN_AMPLITUDE}; pass 0 to keep everything.",
+    )
     args = parser.parse_args()
     xlsx_dir = args.xlsx_dir.expanduser().resolve()
 
     print(f"Reading from: {xlsx_dir}")
-    print(f"Writing to:  {OUT_DIR}\n")
+    print(f"Writing to:  {OUT_DIR}")
+    print(f"Min amplitude: {args.min_amplitude} (0 = no filter)\n")
 
     if not xlsx_dir.exists():
         sys.exit(f"Source directory not found: {xlsx_dir}")
 
     for r in ROUNDS:
-        convert_round(r, xlsx_dir)
+        convert_round(r, xlsx_dir, min_amplitude=args.min_amplitude)
 
     print("\nDone.")
 
