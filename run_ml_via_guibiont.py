@@ -39,16 +39,47 @@ OUT.mkdir(exist_ok=True)
 
 LOGLIN_CSV = RES / "batch_fit_results_loglin.csv"
 FEAT_CSV   = RES / "guibiont_ml_inputs" / "feature_matrix.csv"
+# Curve label -> medium (Condition ID) mapping. Each medium has ~13 biological
+# replicate curves; aggregating by medium before ML makes cross-validation hold
+# out whole media (formulations) rather than individual replicate curves.
+EVAL_XLSX  = HERE.parent / "chemical-media-dataset" / "xlsx_raw" / "BW25113_GrowthDataEvaluation.xlsx"
 
 API = os.environ.get("GUIBIONT_API", "http://localhost:9090")
 TARGETS = ("gr", "lag_loglin", "N_max_emp")
 
 
 def main() -> None:
+    # --- Aggregate replicate curves by medium (Condition ID) before the ML call.
+    # Random per-curve cross-validation leaks: every medium contributes ~13
+    # replicate curves with an identical feature vector, so replicates of a
+    # test-fold medium would also appear in the training fold. Averaging to one
+    # row per medium removes this by construction and matches the manuscript's
+    # "replicate runs were averaged beforehand" / "held-out formulations".
     ll = pd.read_csv(LOGLIN_CSV)
-    fit_df = ll[["label", "gr_loglin", "lag_loglin", "N_max_emp"]].rename(
-        columns={"gr_loglin": "gr"})
-    feat = pd.read_csv(FEAT_CSV)
+    ll["label"] = ll["label"].astype(str).str.strip()
+    feat_pc = pd.read_csv(FEAT_CSV)
+    feat_pc["label"] = feat_pc["label"].astype(str).str.strip()
+
+    ev = pd.read_excel(EVAL_XLSX)
+    lc = next(c for c in ev.columns if c.strip().lower() == "label")
+    cc = next(c for c in ev.columns if "condition" in c.lower())
+    ev = ev.rename(columns={lc: "label", cc: "ConditionID"})
+    ev["label"] = ev["label"].astype(str).str.strip()
+    ev["ConditionID"] = ev["ConditionID"].astype(str).str.strip()
+    ev = ev[["label", "ConditionID"]]
+
+    # Targets: mean over the converged replicate curves of each medium.
+    llm = ll.merge(ev, on="label", how="inner")
+    fit_df = (llm.groupby("ConditionID")[["gr_loglin", "lag_loglin", "N_max_emp"]]
+                 .mean().reset_index()
+                 .rename(columns={"ConditionID": "label", "gr_loglin": "gr"}))
+    # Features: one row per medium (identical across its replicate curves).
+    compound_cols = [c for c in feat_pc.columns if c != "label"]
+    fmap = feat_pc.merge(ev, on="label", how="inner")
+    feat = (fmap.groupby("ConditionID")[compound_cols].first().reset_index()
+                .rename(columns={"ConditionID": "label"}))
+    print(f"Aggregated {len(ll)} replicate curves -> {len(fit_df)} media "
+          f"(features: {len(feat)} rows)")
 
     payload = dict(
         fit_csv        = fit_df.to_csv(index=False),
