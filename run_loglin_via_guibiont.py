@@ -79,11 +79,19 @@ def submit_and_wait(experiment: str, poll_s: float = 4.0,
 
 
 def collect_round(job, round_num: int):
+    """One row per curve the round contained, successful or not.
+
+    Curves the estimator skipped (flat-signal threshold) or failed on are
+    written with empty descriptors and a fit_status saying why, so the output
+    accounts for every retained record instead of silently shrinking to the
+    curves that worked.
+    """
     rows = []
     for r in job["results"]:
         rows.append({
             "round":           round_num,
             "label":           r["well"],
+            "fit_status":      "fitted",
             "gr_loglin":       r.get("gr_loglin"),
             "gr_loglin_se":    r.get("gr_loglin_se"),
             "gr_max_sliding":  r.get("gr_max_sliding"),
@@ -98,6 +106,31 @@ def collect_round(job, round_num: int):
             "N_max_emp":       r.get("N_max_emp"),
             "loglin_converged": bool(r.get("loglin_converged", False)),
         })
+
+    empty = {k: "" for k in ("gr_loglin", "gr_loglin_se", "gr_max_sliding",
+                             "t_exp_start", "t_exp_end", "doubling_time",
+                             "R_squared", "lag_loglin", "N_max_emp")}
+    summary = job.get("summary") or {}
+    for well in summary.get("skipped", []) or job.get("skipped", []) or []:
+        label = well if isinstance(well, str) else well.get("well", "")
+        rows.append({"round": round_num, "label": label,
+                     "fit_status": "skipped_flat", **empty,
+                     "loglin_converged": False})
+    for err in summary.get("errors", []) or job.get("errors", []) or []:
+        text = err if isinstance(err, str) else json.dumps(err)
+        label = text.split("'")[1] if "'" in text else text
+        # Two distinct outcomes the paper reports separately: curves the
+        # conversion step drops for having too few numeric OD readings, and
+        # curves that were fitted but yielded no finite positive mu_max.
+        if "insufficient data points" in text:
+            status = "excluded_insufficient_data"
+        elif "must be finite and positive" in text:
+            status = "no_positive_mu_max"
+        else:
+            status = "failed"
+        rows.append({"round": round_num, "label": label,
+                     "fit_status": status, **empty,
+                     "loglin_converged": False})
     return rows
 
 
