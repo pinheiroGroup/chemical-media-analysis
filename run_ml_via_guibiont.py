@@ -81,6 +81,15 @@ def main() -> None:
     print(f"Aggregated {len(ll)} replicate curves -> {len(fit_df)} media "
           f"(features: {len(feat)} rows)")
 
+    # Save the matrices actually submitted, not just the per-curve inputs.
+    # Replicate averaging happens here, so these are the rows the random
+    # forest and the cross-validation folds see; Supplementary Data S4 needs
+    # exactly them to be reproducible.
+    agg_dir = RES / "guibiont_ml_inputs"
+    agg_dir.mkdir(parents=True, exist_ok=True)
+    fit_df.to_csv(agg_dir / "parameter_matrix_by_medium.csv", index=False)
+    feat.to_csv(agg_dir / "feature_matrix_by_medium.csv", index=False)
+
     payload = dict(
         fit_csv        = fit_df.to_csv(index=False),
         label_col      = "label",
