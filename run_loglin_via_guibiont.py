@@ -88,10 +88,17 @@ def collect_round(job, round_num: int):
     """
     rows = []
     for r in job["results"]:
+        # GUIbiont returns a normal (non-exception) result even when the
+        # fit didn't converge to a meaningful positive mu_max -- e.g. a
+        # flat/data-starved curve whose slope rejected below the epsilon+R^2
+        # floor (analysis.jl:fit_well_loglin). Route those into the same
+        # "no_positive_mu_max" bucket as the ones Kinbiont itself throws on,
+        # instead of mislabeling them "fitted".
+        converged = bool(r.get("loglin_converged", False))
         rows.append({
             "round":           round_num,
             "label":           r["well"],
-            "fit_status":      "fitted",
+            "fit_status":      "fitted" if converged else "no_positive_mu_max",
             "gr_loglin":       r.get("gr_loglin"),
             "gr_loglin_se":    r.get("gr_loglin_se"),
             "gr_max_sliding":  r.get("gr_max_sliding"),
