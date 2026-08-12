@@ -18,6 +18,8 @@ Outputs (results/ml_results_modelfree/):
     feature_importance_{gr,lag_loglin,N_max_emp}.csv          # impurity
     perm_importance_{gr,lag_loglin,N_max_emp}.csv             # permutation
     cv_r2_summary.csv                # per-target CV R² mean ± std
+    cv_r2_folds.csv                  # five fold-level R² values per target
+    ml_downstream_response.json      # complete, unmodified endpoint response
 
 Run:
     /usr/bin/python run_ml_via_guibiont.py
@@ -78,7 +80,15 @@ def main() -> None:
     fmap = feat_pc.merge(ev, on="label", how="inner")
     feat = (fmap.groupby("ConditionID")[compound_cols].first().reset_index()
                 .rename(columns={"ConditionID": "label"}))
-    print(f"Aggregated {len(ll)} replicate curves -> {len(fit_df)} media "
+
+    # Submit and publish the exact same set of media in both matrices. Three
+    # conditions have no retained/fitted curves and therefore no usable target
+    # values; the endpoint's inner join excluded them implicitly in older runs,
+    # leaving a 1,029-row parameter file beside a 1,026-row feature file.
+    common_labels = fit_df[["label"]].merge(feat[["label"]], on="label", how="inner")
+    fit_df = common_labels.merge(fit_df, on="label", how="left")
+    feat = common_labels.merge(feat, on="label", how="left")
+    print(f"Aggregated {len(ll)} replicate curves -> {len(fit_df)} matched media "
           f"(features: {len(feat)} rows)")
 
     # Save the matrices actually submitted, not just the per-curve inputs.
@@ -105,6 +115,14 @@ def main() -> None:
 
     print(f"Got {body['n_wells']} rows joined; saving canonical CSVs.")
 
+    # Preserve the complete endpoint response. In particular, cv_r2 contains
+    # the individual fold values in addition to the displayed mean and SD.
+    # Keeping this JSON prevents tabular exporters from silently discarding
+    # fields returned by GUIbiont.
+    response_path = OUT / "ml_downstream_response.json"
+    response_path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n")
+    print(f"  wrote {response_path}")
+
     # Spearman ρ matrix: one row per compound, one column per target.
     corr_rows = []
     for row in body["correlations"]:
@@ -117,6 +135,7 @@ def main() -> None:
 
     # Importance + permutation per target.
     cv_rows = []
+    cv_fold_rows = []
     for t in TARGETS:
         imp  = pd.DataFrame(body["importance"][t])
         imp  = imp.rename(columns={"feature": "compound"})
@@ -136,9 +155,16 @@ def main() -> None:
             dataset="chemical-media", medium="-", target=t,
             cv_r2_mean=cv["mean"], cv_r2_std=cv["std"], n=cv["n"],
         ))
+        for fold_index, fold_r2 in enumerate(cv.get("folds", []), start=1):
+            cv_fold_rows.append(dict(
+                dataset="chemical-media", medium="-", target=t,
+                fold=fold_index, cv_r2=fold_r2, n=cv["n"],
+            ))
 
     pd.DataFrame(cv_rows).to_csv(OUT / "cv_r2_summary.csv", index=False)
     print(f"  wrote {OUT / 'cv_r2_summary.csv'}")
+    pd.DataFrame(cv_fold_rows).to_csv(OUT / "cv_r2_folds.csv", index=False)
+    print(f"  wrote {OUT / 'cv_r2_folds.csv'}")
 
 
 if __name__ == "__main__":
