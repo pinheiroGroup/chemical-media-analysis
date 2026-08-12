@@ -1,0 +1,16 @@
+dataset,medium,target,fold,cv_r2,n
+chemical-media,-,gr,1,0.6380967228546044,1026
+chemical-media,-,gr,2,0.6746468219743917,1026
+chemical-media,-,gr,3,0.7351051191519358,1026
+chemical-media,-,gr,4,0.7134666169974502,1026
+chemical-media,-,gr,5,0.7418848960918438,1026
+chemical-media,-,lag_loglin,1,-1.0,1026
+chemical-media,-,lag_loglin,2,-1.0,1026
+chemical-media,-,lag_loglin,3,-1.0,1026
+chemical-media,-,lag_loglin,4,-0.004901960781735992,1026
+chemical-media,-,lag_loglin,5,-1.0,1026
+chemical-media,-,N_max_emp,1,0.8381347035523007,1026
+chemical-media,-,N_max_emp,2,0.8910173865952832,1026
+chemical-media,-,N_max_emp,3,0.8822848464132165,1026
+chemical-media,-,N_max_emp,4,0.842532190482932,1026
+chemical-media,-,N_max_emp,5,0.8850769667482388,1026
