@@ -47,7 +47,7 @@ FEAT_CSV   = RES / "guibiont_ml_inputs" / "feature_matrix.csv"
 EVAL_XLSX  = HERE.parent / "chemical-media-dataset" / "xlsx_raw" / "BW25113_GrowthDataEvaluation.xlsx"
 
 API = os.environ.get("GUIBIONT_API", "http://localhost:9090")
-TARGETS = ("gr", "lag_loglin", "N_max_emp")
+TARGETS = ("gr", "N_max_emp")
 
 
 def main() -> None:
