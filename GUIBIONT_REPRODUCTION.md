@@ -34,10 +34,15 @@ The script used in this step converts each Excel file to a self-contained GUIbio
 Run from the repo root (point at the directory holding the raw xlsx files):
 
 ```bash
-python preprocess.py --xlsx-dir "$DATA_SRC"
-# or rely on the default: ../chemical-media-dataset/xlsx_raw
-# To keep blanks/flat curves in the output: --min-amplitude 0
+python preprocess.py --xlsx-dir "$DATA_SRC" --min-amplitude 0
+# or rely on the default xlsx-dir: ../chemical-media-dataset/xlsx_raw
 ```
+
+The manuscript analysis keeps all curves at this stage — `--min-amplitude 0`
+disables the flat-curve filter described below, deferring exclusion to the
+per-curve fit status recorded in Step 4. Omitting the flag applies the
+default `0.05` threshold instead, which drops more curves upstream and will
+not reproduce the paper's counts.
 
 Output (per round `NN` = 01 … 07):
 
@@ -134,7 +139,7 @@ The `optimizer_used` column records which optimizer (and which restart of BBO) p
 
 ## Step 5 — Clustering (GUIbiont interface)
 
-Clustering is run on the combined set of all 13,400 raw growth curves.
+Clustering is run on the combined set of all 13,608 raw growth curves.
 First, build a single interpolated CSV across all rounds:
 
 ```bash
@@ -142,7 +147,7 @@ python scripts/build_combined_curves.py
 ```
 
 This interpolates each round to a common 97-point time grid (0–48 h) and outputs
-`results/all_curves_combined.csv` (Time_h + 13,400 curve columns).
+`results/all_curves_combined.csv` (Time_h + 13,608 curve columns).
 The script uses boundary-constant extrapolation so the matrix is **NaN-free**
 — GUIbiont's `/api/cluster-sweep` does not sanitise NaN and would otherwise
 silently fail with an empty result.
