@@ -8,10 +8,17 @@ downstream analysis of medium composition.
 
 - GUIbiont v1.1.1 with Kinbiont.jl v1.5.1, running on Julia 1.12.6.
 - Python 3.9 or newer with `pandas`, `numpy` and `openpyxl`.
-- The raw BW25113 workbooks from the published dataset.
+- All nine BW25113 workbooks from the published dataset: the seven raw growth
+  files (`BW25113_Growth_Round0{1-7}.xlsx`),
+  `BW25113_GrowthDataEvaluation.xlsx` (curve-to-medium mapping) and
+  `BW25113_Medium composition.xlsx` (44 compound concentrations). Frozen copies
+  are available in the
+  [`chemical-media-dataset`](https://github.com/pinheiroGroup/chemical-media-dataset)
+  repository; the source publication is *Scientific Data* (2025),
+  [doi:10.1038/s41597-025-05356-3](https://doi.org/10.1038/s41597-025-05356-3).
 
 The commands below assume that GUIbiont is in `$GUIBIONT`. `DATA_SRC` may
-point to the directory containing the raw workbooks; without it, the scripts
+point to the directory containing all nine workbooks; without it, the scripts
 use `../chemical-media-dataset/xlsx_raw`. The API URL defaults to
 `http://localhost:8080` and can be overridden with `GUIBIONT_API`.
 
