@@ -1,0 +1,26 @@
+Data license and attribution
+
+The growth-curve records converted into data/bw25113_round01 through
+data/bw25113_round07, and the derived tables under results/, originate from:
+
+Honoka Aida and Bei-Wen Ying. Population Dynamics of Escherichia coli Growing
+under Chemically Defined Media. Scientific Data 12, 984 (2025).
+https://doi.org/10.1038/s41597-025-05356-3
+
+The source workbooks are deposited on Figshare and declared under the Creative
+Commons Attribution 4.0 International license (CC BY 4.0):
+
+https://creativecommons.org/licenses/by/4.0/
+
+A frozen snapshot of the nine source workbooks, with per-file checksums, is
+maintained in the companion repository:
+
+https://github.com/pinheiroGroup/chemical-media-dataset
+
+You may share and adapt the material for any purpose provided that appropriate
+credit is given, a link to the license is supplied, and changes are indicated.
+Derived tabular and JSON data in this repository were produced from those
+source files and should retain the same source attribution.
+
+The MIT License in LICENSE applies to repository-authored software, not to the
+third-party source data.

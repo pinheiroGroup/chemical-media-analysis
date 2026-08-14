@@ -28,4 +28,7 @@ python scripts/validate_results.py
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Repository-authored software is available under the MIT License; see
+[`LICENSE`](LICENSE). The underlying growth-curve data originate from the
+Scientific Data article cited above and are distributed under CC BY 4.0; see
+[`DATA_LICENSE`](DATA_LICENSE).
