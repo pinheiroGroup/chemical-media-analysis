@@ -2,14 +2,14 @@
 
 **Generated:** 2026-03-30
 **Dataset:** BW25113 E. coli growth curves in 1,026 defined media conditions
-**Model:** KinBiont aHPM (adjusted Heterogeneous Population Model)
+**Model:** Kinbiont aHPM (adjusted Heterogeneous Population Model)
 **Analysis by:** Claude (Anthropic)
 
 ---
 
 ## Executive Summary
 
-This report documents a comprehensive investigation of growth parameters fitted by the KinBiont aHPM model to E. coli BW25113 growth curves across >1,000 chemically defined media conditions. We discovered a fundamental insight: **the commonly measured "growth rate" (maximum slope of log(OD) vs time) is primarily determined by lag phase exit dynamics, not the intrinsic exponential growth rate.**
+This report documents a comprehensive investigation of growth parameters fitted by the Kinbiont aHPM model to E. coli BW25113 growth curves across >1,000 chemically defined media conditions. We discovered a fundamental insight: **the commonly measured "growth rate" (maximum slope of log(OD) vs time) is primarily determined by lag phase exit dynamics, not the intrinsic exponential growth rate.**
 
 ### Key Discoveries
 
@@ -286,7 +286,7 @@ The low R^2 despite high Spearman correlation indicates a monotonic but highly n
 - Media composition: BW25113_Medium composition.xlsx
 
 ### 8.2 Model Fitting
-- Software: KinBiont.jl (aHPM model)
+- Software: Kinbiont.jl (aHPM model)
 - 13,400 curves converged successfully
 
 ### 8.3 Statistical Analysis
