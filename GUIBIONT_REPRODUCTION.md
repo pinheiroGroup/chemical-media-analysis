@@ -189,7 +189,10 @@ against unchanged inputs reproduces the files byte for byte.
 
 ## Step 6 — Clustering (GUIbiont interface)
 
-Clustering is run on the combined set of all 13,608 raw growth curves.
+Clustering is run on the combined set of 13,400 growth curves retained after
+preprocessing. The original workbooks contain 13,608 curves, of which 208 are
+excluded during conversion because they contain fewer than ten numeric OD
+measurements.
 First, build a single interpolated CSV across all rounds:
 
 ```bash
@@ -197,7 +200,7 @@ python scripts/build_combined_curves.py
 ```
 
 This interpolates each round to a common 97-point time grid (0–48 h) and outputs
-`results/all_curves_combined.csv` (Time_h + 13,608 curve columns).
+`results/all_curves_combined.csv` (Time_h + 13,400 curve columns).
 The script uses boundary-constant extrapolation so the matrix is **NaN-free**
 — GUIbiont's `/api/cluster-sweep` does not sanitise NaN and would otherwise
 silently fail with an empty result.
