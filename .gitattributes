@@ -1,0 +1,8 @@
+.gitignore text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+data/conversion_manifest.csv text eol=lf
+results/batch_fit_results_loglin.csv text eol=lf
+results/guibiont_ml_inputs/*.csv text eol=lf
+results/ml_results_modelfree/*.csv text eol=lf
+results/ml_results_modelfree/*.json text eol=lf

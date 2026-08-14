@@ -2,10 +2,11 @@
 Convert BW25113 chemical-media growth curve Excel files to GUIbiont-compatible
 experiment folders.
 
-Source: figshare DOI 10.1038/s41597-025-05356-3
+Source article DOI: 10.1038/s41597-025-05356-3
 Input:  BW25113_Growth_Round0{1-7}.xlsx (location via --xlsx-dir, $DATA_SRC, or default)
 Output: data/bw25113_round0{1-7}/data_channel_1.csv
         data/bw25113_round0{1-7}/annotation_clean.csv
+        data/conversion_manifest.csv
 
 Each output folder follows the GUIbiont Clean_data layout:
   - data_channel_1.csv: Time_h, Curve00001, Curve00002, ...
@@ -40,10 +41,9 @@ def exp_name(round_num: int) -> str:
 # below the threshold are dropped here so they don't show up as failures.
 MIN_DATA_POINTS = 10
 
-# Drop curves whose OD never changes by more than this -- blanks, dead cultures,
-# instrument-noise-only wells. No growth signal to fit, and they'd just
-# contaminate per-condition means in the ML pipeline.
-DEFAULT_MIN_AMPLITUDE = 0.05
+# The manuscript excludes only records with insufficient numeric data.
+# A positive threshold remains available for analyses outside this workflow.
+DEFAULT_MIN_AMPLITUDE = 0.0
 
 
 def _is_numeric(v) -> bool:
@@ -56,7 +56,8 @@ def _is_numeric(v) -> bool:
         return False
 
 
-def convert_round(round_num: int, xlsx_dir: Path, min_amplitude: float = DEFAULT_MIN_AMPLITUDE) -> None:
+def convert_round(round_num: int, xlsx_dir: Path,
+                  min_amplitude: float = DEFAULT_MIN_AMPLITUDE) -> list[dict]:
     src     = xlsx_dir / f"BW25113_Growth_Round{round_num:02d}.xlsx"
     exp_dir = OUT_DIR / exp_name(round_num)
     data_dst = exp_dir / "data_channel_1.csv"
@@ -77,19 +78,26 @@ def convert_round(round_num: int, xlsx_dir: Path, min_amplitude: float = DEFAULT
     #   1. Fewer than MIN_DATA_POINTS numeric readings (empty/very-short).
     #   2. Amplitude (max - min) below `min_amplitude` (flat / blank / dead).
     keep_idx = [0]  # always keep the time column
+    manifest = []
     n_empty  = 0
     n_flat   = 0
     for j in range(1, len(header)):
         vals = [float(r[j]) for r in data_rows if j < len(r) and _is_numeric(r[j])]
         if len(vals) < MIN_DATA_POINTS:
             n_empty += 1
+            status = "excluded_insufficient_data"
+            manifest.append({"round": round_num, "label": header[j],
+                             "conversion_status": status})
             continue
         if min_amplitude > 0 and (max(vals) - min(vals)) < min_amplitude:
             n_flat += 1
+            status = "excluded_flat"
+            manifest.append({"round": round_num, "label": header[j],
+                             "conversion_status": status})
             continue
         keep_idx.append(j)
-
-    n_dropped = n_empty + n_flat
+        manifest.append({"round": round_num, "label": header[j],
+                         "conversion_status": "retained"})
 
     filtered_header = [header[j] for j in keep_idx]
     filtered_rows   = [[r[j] if j < len(r) else "" for j in keep_idx] for r in data_rows]
@@ -114,6 +122,7 @@ def convert_round(round_num: int, xlsx_dir: Path, min_amplitude: float = DEFAULT
     if n_flat:  drop_parts.append(f"{n_flat} flat")
     drop_note = f", dropped {' + '.join(drop_parts)}" if drop_parts else ""
     print(f"  ({n_curves} curves x {n_tp} timepoints, t_max={t_max}h{drop_note})")
+    return manifest
 
 
 def main() -> None:
@@ -129,8 +138,8 @@ def main() -> None:
         "--min-amplitude",
         type=float,
         default=DEFAULT_MIN_AMPLITUDE,
-        help=f"Drop curves with (max - min) OD below this. Catches blanks / dead cultures. "
-             f"Default {DEFAULT_MIN_AMPLITUDE}; pass 0 to keep everything.",
+        help=f"Optionally drop curves with (max - min) OD below this. "
+             f"Default {DEFAULT_MIN_AMPLITUDE} reproduces the manuscript.",
     )
     args = parser.parse_args()
     xlsx_dir = args.xlsx_dir.expanduser().resolve()
@@ -142,8 +151,23 @@ def main() -> None:
     if not xlsx_dir.exists():
         sys.exit(f"Source directory not found: {xlsx_dir}")
 
+    manifest = []
     for r in ROUNDS:
-        convert_round(r, xlsx_dir, min_amplitude=args.min_amplitude)
+        manifest.extend(convert_round(
+            r, xlsx_dir, min_amplitude=args.min_amplitude))
+
+    manifest_path = OUT_DIR / "conversion_manifest.csv"
+    with manifest_path.open("w", newline="") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=["round", "label", "conversion_status"],
+            lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(manifest)
+
+    retained = sum(row["conversion_status"] == "retained" for row in manifest)
+    print(f"\nManifest: {len(manifest)} original records, {retained} retained, "
+          f"{len(manifest) - retained} excluded")
+    print(f"Written: {manifest_path}")
 
     print("\nDone.")
 

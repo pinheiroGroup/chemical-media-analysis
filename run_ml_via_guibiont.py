@@ -3,11 +3,9 @@
 on the chemical-media screen through /api/ml-downstream and persist the
 canonical CSVs.
 
-This is the API-driven replacement for the earlier sklearn-via-Python
-script (rerun_ml_with_modelfree.py): every number now comes from the same
-RF that the GUIbiont UI displays -- Breiman defaults (sqrt-p feature
-subsampling, 0.7 partial sampling, 100 trees, max depth 5) via Kinbiont's
-DecisionTree.jl backend, not sklearn.
+Every number comes from the same random forest that the GUIbiont UI displays:
+Breiman defaults (sqrt-p feature subsampling, 0.7 partial sampling, 100 trees,
+maximum depth 5) through Kinbiont's DecisionTree.jl backend.
 
 Inputs:
     results/batch_fit_results_loglin.csv  (model-free targets per curve)
@@ -15,8 +13,8 @@ Inputs:
 
 Outputs (results/ml_results_modelfree/):
     correlations_loglin.csv          # Spearman rho per (compound, target)
-    feature_importance_{gr,lag_loglin,N_max_emp}.csv          # impurity
-    perm_importance_{gr,lag_loglin,N_max_emp}.csv             # permutation
+    feature_importance_{gr,N_max_emp}.csv          # impurity
+    perm_importance_{gr,N_max_emp}.csv             # permutation
     cv_r2_summary.csv                # per-target CV R^2 mean +/- std
     cv_r2_folds.csv                  # five fold-level R^2 values per target
     ml_downstream_response.json      # complete, unmodified endpoint response
@@ -28,7 +26,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.request
 from pathlib import Path
 
@@ -41,13 +38,6 @@ OUT.mkdir(exist_ok=True)
 
 LOGLIN_CSV = RES / "batch_fit_results_loglin.csv"
 FEAT_CSV   = RES / "guibiont_ml_inputs" / "feature_matrix.csv"
-# Curve label -> medium (Condition ID) mapping. Each medium has ~13 biological
-# replicate curves; aggregating by medium before ML makes cross-validation hold
-# out whole media (formulations) rather than individual replicate curves.
-EVAL_XLSX  = Path(os.environ.get(
-    "DATA_SRC", HERE.parent / "chemical-media-dataset" / "xlsx_raw")
-) / "BW25113_GrowthDataEvaluation.xlsx"
-
 API = os.environ.get("GUIBIONT_API", "http://localhost:8080")
 TARGETS = ("gr", "N_max_emp")
 
@@ -59,27 +49,27 @@ def main() -> None:
     # test-fold medium would also appear in the training fold. Averaging to one
     # row per medium removes this by construction and matches the manuscript's
     # "replicate runs were averaged beforehand" / "held-out formulations".
-    ll = pd.read_csv(LOGLIN_CSV)
-    ll["label"] = ll["label"].astype(str).str.strip()
+    ll_all = pd.read_csv(LOGLIN_CSV)
+    required = {"label", "ConditionID", "fit_status"}
+    missing = required - set(ll_all.columns)
+    if missing:
+        raise ValueError(f"Log-linear table is missing columns: {sorted(missing)}")
+    ll_all["label"] = ll_all["label"].astype(str).str.strip()
+    ll_all["ConditionID"] = ll_all["ConditionID"].astype(str).str.strip()
+    ll = ll_all[~ll_all["fit_status"].str.startswith("excluded_")].copy()
     feat_pc = pd.read_csv(FEAT_CSV)
     feat_pc["label"] = feat_pc["label"].astype(str).str.strip()
 
-    ev = pd.read_excel(EVAL_XLSX)
-    lc = next(c for c in ev.columns if c.strip().lower() == "label")
-    cc = next(c for c in ev.columns if "condition" in c.lower())
-    ev = ev.rename(columns={lc: "label", cc: "ConditionID"})
-    ev["label"] = ev["label"].astype(str).str.strip()
-    ev["ConditionID"] = ev["ConditionID"].astype(str).str.strip()
-    ev = ev[["label", "ConditionID"]]
+    curve_media = ll_all[["label", "ConditionID"]].drop_duplicates()
 
     # Targets: mean over the converged replicate curves of each medium.
-    llm = ll.merge(ev, on="label", how="inner")
-    fit_df = (llm.groupby("ConditionID")[["gr_loglin", "lag_loglin", "N_max_emp"]]
+    fit_df = (ll.groupby("ConditionID")[["gr_loglin", "N_max_emp"]]
                  .mean().reset_index()
                  .rename(columns={"ConditionID": "label", "gr_loglin": "gr"}))
     # Features: one row per medium (identical across its replicate curves).
     compound_cols = [c for c in feat_pc.columns if c != "label"]
-    fmap = feat_pc.merge(ev, on="label", how="inner")
+    fmap = feat_pc.merge(curve_media, on="label", how="inner",
+                         validate="one_to_one")
     feat = (fmap.groupby("ConditionID")[compound_cols].first().reset_index()
                 .rename(columns={"ConditionID": "label"}))
 
@@ -90,7 +80,8 @@ def main() -> None:
     common_labels = fit_df[["label"]].merge(feat[["label"]], on="label", how="inner")
     fit_df = common_labels.merge(fit_df, on="label", how="left")
     feat = common_labels.merge(feat, on="label", how="left")
-    print(f"Aggregated {len(ll)} replicate curves -> {len(fit_df)} matched media "
+    print(f"Aggregated {len(ll)} retained curves from {len(ll_all)} original "
+          f"records -> {len(fit_df)} matched media "
           f"(features: {len(feat)} rows)")
 
     # Save the matrices actually submitted, not just the per-curve inputs.
@@ -99,8 +90,10 @@ def main() -> None:
     # exactly them to be reproducible.
     agg_dir = RES / "guibiont_ml_inputs"
     agg_dir.mkdir(parents=True, exist_ok=True)
-    fit_df.to_csv(agg_dir / "parameter_matrix_by_medium.csv", index=False)
-    feat.to_csv(agg_dir / "feature_matrix_by_medium.csv", index=False)
+    fit_df.to_csv(agg_dir / "parameter_matrix_by_medium.csv", index=False,
+                  lineterminator="\n")
+    feat.to_csv(agg_dir / "feature_matrix_by_medium.csv", index=False,
+                lineterminator="\n")
 
     payload = dict(
         fit_csv        = fit_df.to_csv(index=False),
@@ -112,7 +105,7 @@ def main() -> None:
         f"{API}/api/ml-downstream", method="POST",
         headers={"Content-Type": "application/json"},
         data=json.dumps(payload).encode())
-    with urllib.request.urlopen(req, timeout=900) as r:
+    with urllib.request.urlopen(req) as r:
         body = json.loads(r.read())
 
     print(f"Got {body['n_wells']} rows joined; saving canonical CSVs.")
@@ -122,7 +115,8 @@ def main() -> None:
     # Keeping this JSON prevents tabular exporters from silently discarding
     # fields returned by GUIbiont.
     response_path = OUT / "ml_downstream_response.json"
-    response_path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n")
+    response_path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n",
+                             newline="\n")
     print(f"  wrote {response_path}")
 
     # Spearman rho matrix: one row per compound, one column per target.
@@ -132,7 +126,8 @@ def main() -> None:
         for t in TARGETS:
             out[t] = row.get(t)
         corr_rows.append(out)
-    pd.DataFrame(corr_rows).to_csv(OUT / "correlations_loglin.csv", index=False)
+    pd.DataFrame(corr_rows).to_csv(
+        OUT / "correlations_loglin.csv", index=False, lineterminator="\n")
     print(f"  wrote {OUT / 'correlations_loglin.csv'}")
 
     # Importance + permutation per target.
@@ -141,13 +136,15 @@ def main() -> None:
     for t in TARGETS:
         imp  = pd.DataFrame(body["importance"][t])
         imp  = imp.rename(columns={"feature": "compound"})
-        imp.to_csv(OUT / f"feature_importance_{t}.csv", index=False)
+        imp.to_csv(OUT / f"feature_importance_{t}.csv", index=False,
+                   lineterminator="\n")
         print(f"  wrote {OUT / f'feature_importance_{t}.csv'}  "
               f"top: {imp.iloc[0]['compound']} ({imp.iloc[0]['importance']:.3f})")
 
         perm = pd.DataFrame(body["permutation_importance"][t])
         perm = perm.rename(columns={"feature": "compound"})
-        perm.to_csv(OUT / f"perm_importance_{t}.csv", index=False)
+        perm.to_csv(OUT / f"perm_importance_{t}.csv", index=False,
+                    lineterminator="\n")
         print(f"  wrote {OUT / f'perm_importance_{t}.csv'}  "
               f"top: {perm.iloc[0]['compound']} "
               f"({perm.iloc[0]['permutation_importance']:.3f})")
@@ -163,9 +160,11 @@ def main() -> None:
                 fold=fold_index, cv_r2=fold_r2, n=cv["n"],
             ))
 
-    pd.DataFrame(cv_rows).to_csv(OUT / "cv_r2_summary.csv", index=False)
+    pd.DataFrame(cv_rows).to_csv(
+        OUT / "cv_r2_summary.csv", index=False, lineterminator="\n")
     print(f"  wrote {OUT / 'cv_r2_summary.csv'}")
-    pd.DataFrame(cv_fold_rows).to_csv(OUT / "cv_r2_folds.csv", index=False)
+    pd.DataFrame(cv_fold_rows).to_csv(
+        OUT / "cv_r2_folds.csv", index=False, lineterminator="\n")
     print(f"  wrote {OUT / 'cv_r2_folds.csv'}")
 
 
