@@ -4,8 +4,8 @@ CSV files needed by GUIbiont's ML Analysis tab.
 
 Workflow (mirrors ml_analysis.jl):
   1. Load results/batch_fit_results.csv  (from GUIbiont Batch Fit, combined)
-  2. Load BW25113_GrowthDataEvaluation.xlsx  → curve label → ConditionID
-  3. Load BW25113_Medium composition.xlsx    → ConditionID → 44 compound concentrations
+  2. Load BW25113_GrowthDataEvaluation.xlsx  -> curve label -> ConditionID
+  3. Load BW25113_Medium composition.xlsx    -> ConditionID -> 44 compound concentrations
   4. Join and aggregate: mean gr, exit_lag_rate, N_max per condition
   5. Write GUIbiont-ready CSVs
 
@@ -16,8 +16,12 @@ Usage:
       --reference    /path/to/BW25113_GrowthDataEvaluation.xlsx
 
 Output:
-  results/guibiont_ml_inputs/fit_results.csv     (condition, gr, exit_lag_rate, N_max)
-  results/guibiont_ml_inputs/feature_matrix.csv  (condition, <44 compounds>)
+  results/guibiont_ml_inputs/fit_results_by_condition.csv     (condition, gr, exit_lag_rate, N_max)
+  results/guibiont_ml_inputs/feature_matrix_by_condition.csv  (condition, <44 compounds>)
+
+These per-condition tables feed the manual ML Analysis tab. The scripted
+pathway (`run_ml_via_guibiont.py`) needs a per-curve matrix instead -- see
+`scripts/build_percurve_feature_matrix.py`, which writes `feature_matrix.csv`.
 """
 
 import argparse
@@ -76,7 +80,7 @@ def load_composition(path: Path) -> tuple[pd.DataFrame, list[str]]:
     compound_cols = [c for c in df.columns if c not in meta]
     for col in compound_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    print(f"  Composition: {len(df)} conditions × {len(compound_cols)} compounds")
+    print(f"  Composition: {len(df)} conditions x {len(compound_cols)} compounds")
     return df, compound_cols
 
 
@@ -87,23 +91,23 @@ def main() -> None:
     parser.add_argument("--reference",  required=True, type=Path)
     args = parser.parse_args()
 
-    print("Loading data …")
+    print("Loading data ...")
     fits    = load_fits(args.fits)
     eval_df = load_evaluation(args.reference)
     comp_df, compound_cols = load_composition(args.composition)
 
-    print("\nJoining …")
+    print("\nJoining ...")
     joined = fits.merge(eval_df, on="label", how="left").dropna(subset=["ConditionID"])
-    print(f"  After label→condition join: {len(joined)} curves")
+    print(f"  After label->condition join: {len(joined)} curves")
 
     joined = joined.merge(comp_df, on="ConditionID", how="left").dropna(subset=[compound_cols[0]])
     print(f"  After composition join: {len(joined)} curves")
 
-    print("\nAggregating per condition …")
+    print("\nAggregating per condition ...")
     param_cols = [c for c in ["gr", "exit_lag_rate", "N_max"] if c in joined.columns]
     agg_params = joined.groupby("ConditionID")[param_cols].mean().reset_index()
 
-    # Compound concentrations are constant within a condition — take first value
+    # Compound concentrations are constant within a condition -- take first value
     agg_comp = joined.groupby("ConditionID")[compound_cols].first().reset_index()
 
     cond_params = agg_params.rename(columns={"ConditionID": "condition"})
@@ -112,11 +116,11 @@ def main() -> None:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    fit_out = OUT_DIR / "fit_results.csv"
+    fit_out = OUT_DIR / "fit_results_by_condition.csv"
     cond_params.to_csv(fit_out, index=False)
     print(f"\nWritten: {fit_out}")
 
-    feat_out = OUT_DIR / "feature_matrix.csv"
+    feat_out = OUT_DIR / "feature_matrix_by_condition.csv"
     cond_comp.to_csv(feat_out, index=False)
     print(f"Written: {feat_out}")
 
