@@ -1,7 +1,7 @@
 """
 Combine per-round batch fit CSVs into a single results/batch_fit_results.csv.
 
-Input:  results/batch_fit_round01.csv … results/batch_fit_round07.csv
+Input:  results/batch_fit_round01.csv ... results/batch_fit_round07.csv
         (downloaded from GUIbiont Batch Fit tab, one per round)
 Output: results/batch_fit_results.csv
         Columns: round, label, gr, exit_lag_rate, N_max, shape, aicc, loss,
@@ -25,7 +25,7 @@ def main() -> None:
     for r in ROUNDS:
         path = RESULTS_DIR / f"batch_fit_round{r:02d}.csv"
         if not path.exists():
-            print(f"  WARNING: {path.name} not found — skipping round {r:02d}")
+            print(f"  WARNING: {path.name} not found -- skipping round {r:02d}")
             continue
         df = pd.read_csv(path)
         df.insert(0, "round", f"Round{r:02d}")

@@ -4,7 +4,7 @@ concatenate into a single file for upload to GUIbiont's Clustering tab.
 
 Different rounds have different numbers of timepoints and slightly different
 time axes.  This script linearly interpolates each curve to a shared 97-point
-grid spanning 0–48 h so GUIbiont receives a uniform matrix.
+grid spanning 0-48 h so GUIbiont receives a uniform matrix.
 
 Input:  data/bw25113_round0{1-7}/data_channel_1.csv
 Output: results/all_curves_combined.csv
@@ -37,7 +37,7 @@ def interpolate_round(df: pd.DataFrame, t_grid: np.ndarray) -> pd.DataFrame:
         y = pd.to_numeric(curves[col], errors="coerce").values
         valid = ~np.isnan(y)
         if valid.sum() < 2:
-            # Use a constant zero series — GUIbiont's prescreen/blank detection
+            # Use a constant zero series -- GUIbiont's prescreen/blank detection
             # will flag and segregate it. Avoid NaN: /api/cluster-sweep does not
             # sanitise NaN and silently fails when any row contains them.
             out[col] = np.zeros(len(t_grid))
@@ -57,7 +57,7 @@ def main() -> None:
     for r in ROUNDS:
         path = DATA_DIR / f"bw25113_round{r:02d}" / "data_channel_1.csv"
         if not path.exists():
-            print(f"  WARNING: {path} not found — skipping round {r:02d}")
+            print(f"  WARNING: {path} not found -- skipping round {r:02d}")
             continue
         df = pd.read_csv(path)
         interp = interpolate_round(df, t_grid)
@@ -74,7 +74,7 @@ def main() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / "all_curves_combined.csv"
     combined.to_csv(out, index=False)
-    print(f"\nCombined: {total} curves × {N_POINTS} timepoints (0–{T_END} h)")
+    print(f"\nCombined: {total} curves x {N_POINTS} timepoints (0-{T_END} h)")
     print(f"Written to {out}")
 
 

@@ -40,7 +40,7 @@ def exp_name(round_num: int) -> str:
 # below the threshold are dropped here so they don't show up as failures.
 MIN_DATA_POINTS = 10
 
-# Drop curves whose OD never changes by more than this — blanks, dead cultures,
+# Drop curves whose OD never changes by more than this -- blanks, dead cultures,
 # instrument-noise-only wells. No growth signal to fit, and they'd just
 # contaminate per-condition means in the ML pipeline.
 DEFAULT_MIN_AMPLITUDE = 0.05
@@ -62,7 +62,7 @@ def convert_round(round_num: int, xlsx_dir: Path, min_amplitude: float = DEFAULT
     data_dst = exp_dir / "data_channel_1.csv"
     ann_dst  = exp_dir / "annotation_clean.csv"
 
-    print(f"  {src.name} → {exp_dir.name}/", end="", flush=True)
+    print(f"  {src.name} -> {exp_dir.name}/", end="", flush=True)
 
     wb = openpyxl.load_workbook(src, read_only=True, data_only=True)
     ws = wb.worksheets[0]
@@ -113,7 +113,7 @@ def convert_round(round_num: int, xlsx_dir: Path, min_amplitude: float = DEFAULT
     if n_empty: drop_parts.append(f"{n_empty} empty")
     if n_flat:  drop_parts.append(f"{n_flat} flat")
     drop_note = f", dropped {' + '.join(drop_parts)}" if drop_parts else ""
-    print(f"  ({n_curves} curves × {n_tp} timepoints, t_max={t_max}h{drop_note})")
+    print(f"  ({n_curves} curves x {n_tp} timepoints, t_max={t_max}h{drop_note})")
 
 
 def main() -> None:

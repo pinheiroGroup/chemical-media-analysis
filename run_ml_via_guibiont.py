@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Run GUIbiont's ML-downstream (impurity + permutation + CV R² + Spearman)
+"""Run GUIbiont's ML-downstream (impurity + permutation + CV R^2 + Spearman)
 on the chemical-media screen through /api/ml-downstream and persist the
 canonical CSVs.
 
 This is the API-driven replacement for the earlier sklearn-via-Python
 script (rerun_ml_with_modelfree.py): every number now comes from the same
-RF that the GUIbiont UI displays — Breiman defaults (sqrt-p feature
+RF that the GUIbiont UI displays -- Breiman defaults (sqrt-p feature
 subsampling, 0.7 partial sampling, 100 trees, max depth 5) via Kinbiont's
 DecisionTree.jl backend, not sklearn.
 
@@ -14,11 +14,11 @@ Inputs:
     results/guibiont_ml_inputs/feature_matrix.csv  (44 compound concs per curve)
 
 Outputs (results/ml_results_modelfree/):
-    correlations_loglin.csv          # Spearman ρ per (compound, target)
+    correlations_loglin.csv          # Spearman rho per (compound, target)
     feature_importance_{gr,lag_loglin,N_max_emp}.csv          # impurity
     perm_importance_{gr,lag_loglin,N_max_emp}.csv             # permutation
-    cv_r2_summary.csv                # per-target CV R² mean ± std
-    cv_r2_folds.csv                  # five fold-level R² values per target
+    cv_r2_summary.csv                # per-target CV R^2 mean +/- std
+    cv_r2_folds.csv                  # five fold-level R^2 values per target
     ml_downstream_response.json      # complete, unmodified endpoint response
 
 Run:
@@ -44,9 +44,11 @@ FEAT_CSV   = RES / "guibiont_ml_inputs" / "feature_matrix.csv"
 # Curve label -> medium (Condition ID) mapping. Each medium has ~13 biological
 # replicate curves; aggregating by medium before ML makes cross-validation hold
 # out whole media (formulations) rather than individual replicate curves.
-EVAL_XLSX  = HERE.parent / "chemical-media-dataset" / "xlsx_raw" / "BW25113_GrowthDataEvaluation.xlsx"
+EVAL_XLSX  = Path(os.environ.get(
+    "DATA_SRC", HERE.parent / "chemical-media-dataset" / "xlsx_raw")
+) / "BW25113_GrowthDataEvaluation.xlsx"
 
-API = os.environ.get("GUIBIONT_API", "http://localhost:9090")
+API = os.environ.get("GUIBIONT_API", "http://localhost:8080")
 TARGETS = ("gr", "N_max_emp")
 
 
@@ -123,7 +125,7 @@ def main() -> None:
     response_path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n")
     print(f"  wrote {response_path}")
 
-    # Spearman ρ matrix: one row per compound, one column per target.
+    # Spearman rho matrix: one row per compound, one column per target.
     corr_rows = []
     for row in body["correlations"]:
         out = {"compound": row["feature"]}

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Run /api/batch-fit-loglin on all chemical-media Round experiments and merge
-the resulting μ_loglin into the existing aHPM batch_fit_results.csv (which
-keeps the parametric λ and K).
+the resulting mu_loglin into the existing aHPM batch_fit_results.csv (which
+keeps the parametric lambda and K).
 
 Outputs:
-    results/batch_fit_results_loglin.csv   # μ_loglin only, one row per curve
+    results/batch_fit_results_loglin.csv   # mu_loglin only, one row per curve
     results/batch_fit_results_merged.csv   # full merge with existing aHPM table
 
 Run:
@@ -27,9 +27,9 @@ EXISTING_FIT_CSV = RESULTS / "batch_fit_results.csv"
 OUT_LOGLIN_CSV   = RESULTS / "batch_fit_results_loglin.csv"
 OUT_MERGED_CSV   = RESULTS / "batch_fit_results_merged.csv"
 
-API = os.environ.get("GUIBIONT_API", "http://localhost:9090")
+API = os.environ.get("GUIBIONT_API", "http://localhost:8080")
 
-# Log-lin params — same as the Keio run for cross-study consistency. The
+# Log-lin params -- same as the Keio run for cross-study consistency. The
 # 97-timepoint chemical-media curves are even denser than the 200-point
 # Keio mean curves, so the same window settings remain appropriate.
 LOGLIN_PARAMS = {
@@ -70,7 +70,7 @@ def submit_and_wait(experiment: str, poll_s: float = 4.0,
         s, p = _get(f"/api/batch-fit/progress/{job_id}")
         if p.get("status") == "done":
             elapsed = time.time() - start
-            print(f"  {experiment}: done in {elapsed:.1f}s — "
+            print(f"  {experiment}: done in {elapsed:.1f}s -- "
                   f"summary={p['summary']}")
             return p
         if time.time() - start > max_s:
@@ -143,20 +143,26 @@ def collect_round(job, round_num: int):
 
 def main():
     rows = []
-    print("Submitting batch-fit-loglin for each chemical-media round…")
+    print("Submitting batch-fit-loglin for each chemical-media round...")
     t0 = time.time()
     for n in range(1, 8):
-        exp = f"chem_round{n:02d}"
+        exp = f"bw25113_round{n:02d}"
         job = submit_and_wait(exp)
         rows.extend(collect_round(job, n))
     print(f"\nTotal wall time: {time.time()-t0:.1f}s")
 
-    df_ll = pd.DataFrame(rows)
+    # The API returns wells in whatever order the worker threads finish, so
+    # sort on a stable key before writing. Without this, re-running against
+    # unchanged inputs produces identical values in a different row order and
+    # the output file always shows up as modified in `git status`.
+    df_ll = (pd.DataFrame(rows)
+               .sort_values(["round", "label"], kind="stable")
+               .reset_index(drop=True))
     df_ll.to_csv(OUT_LOGLIN_CSV, index=False)
     print(f"\nWrote {OUT_LOGLIN_CSV}  ({len(df_ll)} rows, "
           f"{int(df_ll['loglin_converged'].sum())} converged)")
 
-    print(f"\nμ_loglin quantiles: "
+    print(f"\nmu_loglin quantiles: "
           f"p05={df_ll['gr_loglin'].quantile(0.05):.3f}  "
           f"p50={df_ll['gr_loglin'].median():.3f}  "
           f"p95={df_ll['gr_loglin'].quantile(0.95):.3f}  "
@@ -173,18 +179,20 @@ def main():
                   f"p50={df_ll[col].median():.3f}  "
                   f"p95={df_ll[col].quantile(0.95):.3f}")
         else:
-            print(f"{label}: all NaN — old GUIbiont/Kinbiont still running?")
+            print(f"{label}: all NaN -- old GUIbiont/Kinbiont still running?")
 
-    # ── Merge with existing aHPM batch fit ─────────────────────────────────
+    # -- Merge with existing aHPM batch fit ---------------------------------
     if not EXISTING_FIT_CSV.exists():
-        print(f"WARNING: no existing fit table at {EXISTING_FIT_CSV} — "
+        print(f"WARNING: no existing fit table at {EXISTING_FIT_CSV} -- "
               "skipping merge")
         return
     df_ahpm = pd.read_csv(EXISTING_FIT_CSV)
-    merged = df_ahpm.merge(df_ll, on=["round", "label"], how="left")
+    merged = (df_ahpm.merge(df_ll, on=["round", "label"], how="left")
+                     .sort_values(["round", "label"], kind="stable")
+                     .reset_index(drop=True))
     merged.to_csv(OUT_MERGED_CSV, index=False)
     print(f"\nWrote {OUT_MERGED_CSV}  ({len(merged)} rows; "
-          f"{merged['gr_loglin'].notna().sum()} have μ_loglin)")
+          f"{merged['gr_loglin'].notna().sum()} have mu_loglin)")
 
     # Quick comparison aHPM gr vs log-lin gr (on matched rows)
     matched = merged.dropna(subset=["gr", "gr_loglin"])
@@ -193,7 +201,7 @@ def main():
           f"max = {matched['gr'].max():.3f}")
     print(f"  Log-lin gr_loglin median = {matched['gr_loglin'].median():.3f},  "
           f"max = {matched['gr_loglin'].max():.3f}")
-    print(f"  Spearman ρ(aHPM, log-lin) = "
+    print(f"  Spearman rho(aHPM, log-lin) = "
           f"{matched[['gr', 'gr_loglin']].corr('spearman').iloc[0,1]:.3f}")
     n_blown = int((matched["gr"] > 3).sum())
     print(f"  aHPM curves above physiological ceiling (gr > 3): "
