@@ -36,9 +36,11 @@ def exp_name(round_num: int) -> str:
     return f"bw25113_round{round_num:02d}"
 
 
-# GUIbiont's batch fitter requires at least this many non-empty OD readings
-# per curve (src/routes/fitting.jl: `length(valid_indices) < 10`). Curves
-# below the threshold are dropped here so they don't show up as failures.
+# Keep curves with at least this many non-empty OD readings during preprocessing.
+# The /api/batch-fit-loglin route applies its own requirement of
+# max(10, pt_smoothing_derivative + pt_min_size_of_win + 2) points (16 with
+# the manuscript settings); curves below that threshold are reported by the
+# batch fitter rather than discarded here.
 MIN_DATA_POINTS = 10
 
 # The manuscript excludes only records with insufficient numeric data.
