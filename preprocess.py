@@ -104,13 +104,13 @@ def convert_round(round_num: int, xlsx_dir: Path,
 
     exp_dir.mkdir(parents=True, exist_ok=True)
     with data_dst.open("w", newline="") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, lineterminator="\n")
         writer.writerow(filtered_header)
         writer.writerows(filtered_rows)
 
     curve_names = filtered_header[1:]
     with ann_dst.open("w", newline="") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, lineterminator="\n")
         for name in curve_names:
             writer.writerow([name, "g", "", "", "", "", ""])
 
